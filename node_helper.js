@@ -68,8 +68,21 @@ module.exports = NodeHelper.create({
         });
     },
 
+    shouldIncludeGroup: function(group, rooms) {
+        if (!rooms || rooms.length === 0) return true;
+
+        const zoneNames = group.ZoneGroupMember.map(m => m.ZoneName.toLowerCase());
+        const normalizedRooms = rooms.map(r => r.toLowerCase());
+
+        return zoneNames.some(zone => normalizedRooms.includes(zone));
+    },
+
     setGroups(groups) {
-        Promise.all(groups.map(group => {
+        const filteredGroups = groups.filter(group =>
+            this.shouldIncludeGroup(group, this.config.rooms || [])
+        );
+
+        Promise.all(filteredGroups.map(group => {
             const sonos = group.CoordinatorDevice();
             return Promise.all([
                 sonos.currentTrack(),
