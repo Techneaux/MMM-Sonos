@@ -181,6 +181,7 @@
 .sonos-modal-slider {
     flex: 1;
     -webkit-appearance: none;
+    -moz-appearance: none;
     appearance: none;
     height: 6px;
     background: #444;

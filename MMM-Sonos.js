@@ -14,6 +14,7 @@ Module.register('MMM-Sonos', {
     isModalOpen: false,
     currentGroupId: null,
     modalElement: null,
+    volumeDebounceTimer: null,
 
     start: function () {
         Log.log('Sonos frontend started');
@@ -414,12 +415,23 @@ Module.register('MMM-Sonos', {
         if (volumeValue) {
             volumeValue.textContent = volume;
         }
-        this.updateVolumeIcon(false, volume);
 
-        this.sendSocketNotification('SONOS_SET_VOLUME', {
-            groupId: this.currentGroupId,
-            volume: volume
-        });
+        // Use actual mute state instead of hardcoded false
+        const currentItem = this.items[this.currentGroupId];
+        const isMuted = currentItem ? currentItem.isMuted : false;
+        this.updateVolumeIcon(isMuted, volume);
+
+        // Debounce API call to prevent flooding Sonos device
+        const self = this;
+        if (this.volumeDebounceTimer) {
+            clearTimeout(this.volumeDebounceTimer);
+        }
+        this.volumeDebounceTimer = setTimeout(function() {
+            self.sendSocketNotification('SONOS_SET_VOLUME', {
+                groupId: self.currentGroupId,
+                volume: volume
+            });
+        }, 200);
     },
 
     suspend: function() {
@@ -427,6 +439,7 @@ Module.register('MMM-Sonos', {
         if (this.modalElement && this.modalElement.parentNode === document.body) {
             document.body.removeChild(this.modalElement);
         }
+        this.modalElement = null;  // Clear reference to ensure proper recreation
         this.closeSonosModal();
     }
 });

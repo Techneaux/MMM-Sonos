@@ -331,6 +331,13 @@ module.exports = NodeHelper.create({
             return;
         }
 
+        // Validate volume range
+        volume = Math.max(0, Math.min(100, parseInt(volume, 10)));
+        if (isNaN(volume)) {
+            console.error(`[MMM-Sonos] Invalid volume value`);
+            return;
+        }
+
         const sonos = group.CoordinatorDevice();
         sonos.setVolume(volume)
             .then(() => {
