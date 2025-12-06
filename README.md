@@ -56,5 +56,5 @@ then add the module to your MagicMirror's configuration. Here is an example:
 | showAlbum | Whether or not to display the album name | `true` | No |
 | showMetadata | Whether or not to display the track metadata, i.e. room where it's played, length, volume | `true` | No |
 | listenWithPolling | When the default events won't work with the sonos, it is possible to poll the data | `false` | No |
-| pollingTimeout | Polling timeout in millisecond, only workd when `listenWithPolling` is set to `true` | 5000 | No |
+| pollingTimeout | Polling timeout in milliseconds, only works when `listenWithPolling` is set to `true` | 5000 | No |
 | rooms | Array of room names to display. If empty, all rooms are shown. Case-insensitive. When speakers are grouped, the group is shown if any member matches. | `[]` | No |
