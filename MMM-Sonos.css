@@ -42,6 +42,10 @@
     margin-bottom: 8px;
 }
 
+.sonos-group.clickable:last-child {
+    margin-bottom: 0;
+}
+
 .sonos-group.clickable:hover {
     background-color: rgba(255, 255, 255, 0.05);
 }
