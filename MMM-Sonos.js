@@ -7,6 +7,7 @@ Module.register('MMM-Sonos', {
         showMetadata: true,
         listenWithPolling: false,
         pollingTimeout: 5000,
+        rooms: [],
     },
 
     items: {},
@@ -15,7 +16,8 @@ Module.register('MMM-Sonos', {
         Log.log('Sonos frontend started');
         this.sendSocketNotification('SONOS_START', {
             listenWithPolling: this.config.listenWithPolling,
-            pollingTime: this.config.pollingTimeout ?? 5000
+            pollingTime: this.config.pollingTimeout ?? 5000,
+            rooms: this.config.rooms,
         });
     },
 
