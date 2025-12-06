@@ -8,6 +8,7 @@ module.exports = NodeHelper.create({
     config: null,
     subscribedDevices: [],
     pollingIntervals: [],
+    groupsById: {},
 
     init: function () {
         this.discovery = new AsyncDeviceDiscovery();
@@ -43,8 +44,17 @@ module.exports = NodeHelper.create({
                 this.config = payload
                 this.discoverGroups();
                 break;
+            case 'SONOS_TOGGLE_PLAY_PAUSE':
+                this.handleTogglePlayPause(payload.groupId);
+                break;
+            case 'SONOS_NEXT':
+                this.handleNext(payload.groupId);
+                break;
+            case 'SONOS_SET_VOLUME':
+                this.handleSetVolume(payload.groupId, payload.volume);
+                break;
             default:
-                Log.info(`Notification with ID "${id}" unsupported. Ignoring...`);
+                console.log(`Notification with ID "${id}" unsupported. Ignoring...`);
                 break;
         }
     },
@@ -119,6 +129,12 @@ module.exports = NodeHelper.create({
                 };
             });
         })).then(items => {
+            // Store groups by ID for control commands
+            this.groupsById = items.reduce((map, item) => {
+                map[item.group.ID] = item.group;
+                return map;
+            }, {});
+
             this.sendSocketNotification('SET_SONOS_GROUPS', items.reduce((map, item) => {
                 map[item.group.ID] = item;
                 return map;
@@ -272,5 +288,63 @@ module.exports = NodeHelper.create({
                 });
             });
         });
+    },
+
+    handleTogglePlayPause: function(groupId) {
+        const group = this.groupsById[groupId];
+        if (!group) {
+            console.error(`[MMM-Sonos] Group not found for ID: ${groupId}`);
+            return;
+        }
+
+        const sonos = group.CoordinatorDevice();
+        sonos.togglePlayback()
+            .then(() => {
+                console.log(`[MMM-Sonos] Toggle play/pause for group: ${group.Name}`);
+            })
+            .catch(error => {
+                console.error(`[MMM-Sonos] Failed to toggle playback: ${error.message}`);
+            });
+    },
+
+    handleNext: function(groupId) {
+        const group = this.groupsById[groupId];
+        if (!group) {
+            console.error(`[MMM-Sonos] Group not found for ID: ${groupId}`);
+            return;
+        }
+
+        const sonos = group.CoordinatorDevice();
+        sonos.next()
+            .then(() => {
+                console.log(`[MMM-Sonos] Skip to next for group: ${group.Name}`);
+            })
+            .catch(error => {
+                console.error(`[MMM-Sonos] Failed to skip track: ${error.message}`);
+            });
+    },
+
+    handleSetVolume: function(groupId, volume) {
+        const group = this.groupsById[groupId];
+        if (!group) {
+            console.error(`[MMM-Sonos] Group not found for ID: ${groupId}`);
+            return;
+        }
+
+        // Validate volume range
+        volume = Math.max(0, Math.min(100, parseInt(volume, 10)));
+        if (isNaN(volume)) {
+            console.error(`[MMM-Sonos] Invalid volume value`);
+            return;
+        }
+
+        const sonos = group.CoordinatorDevice();
+        sonos.setVolume(volume)
+            .then(() => {
+                console.log(`[MMM-Sonos] Set volume to ${volume} for group: ${group.Name}`);
+            })
+            .catch(error => {
+                console.error(`[MMM-Sonos] Failed to set volume: ${error.message}`);
+            });
     }
 });
