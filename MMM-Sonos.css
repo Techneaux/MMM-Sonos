@@ -32,3 +32,188 @@
     stroke-linejoin: round;
     fill: none;
 }
+
+/* Clickable group styling */
+.sonos-group.clickable {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    padding: 8px;
+    border-radius: 6px;
+    margin-bottom: 8px;
+}
+
+.sonos-group.clickable:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Modal overlay */
+.sonos-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+.sonos-modal.hidden {
+    display: none;
+}
+
+/* Modal content */
+.sonos-modal-content {
+    background-color: #1e1e1e;
+    border-radius: 12px;
+    padding: 24px;
+    min-width: 300px;
+    max-width: 400px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+    position: relative;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    border: 1px solid #333;
+}
+
+/* Track title */
+.sonos-modal-title {
+    margin: 0 0 20px 0;
+    font-size: 1.4em;
+    color: #fff;
+    word-wrap: break-word;
+    text-align: center;
+}
+
+/* Detail rows */
+.sonos-modal-details {
+    margin-bottom: 24px;
+}
+
+.sonos-modal-row {
+    margin-bottom: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+}
+
+.sonos-modal-label {
+    color: #888;
+    min-width: 70px;
+    margin-right: 8px;
+}
+
+.sonos-modal-value {
+    color: #fff;
+    flex: 1;
+}
+
+/* Controls container */
+.sonos-modal-controls {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-bottom: 24px;
+}
+
+/* Control buttons */
+.sonos-modal-btn {
+    padding: 12px 24px;
+    border: none;
+    border-radius: 8px;
+    font-size: 1em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.sonos-modal-btn-control {
+    background-color: #444;
+    color: #fff;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+.sonos-modal-btn-control:hover {
+    background-color: #555;
+    transform: scale(1.05);
+}
+
+.sonos-modal-btn-control:active {
+    transform: scale(0.95);
+}
+
+.sonos-modal-btn-control .feather {
+    width: 24px;
+    height: 24px;
+}
+
+/* Volume container */
+.sonos-modal-volume {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+}
+
+.sonos-modal-volume .feather {
+    width: 20px;
+    height: 20px;
+    color: #888;
+}
+
+.sonos-modal-volume-text {
+    color: #fff;
+    min-width: 30px;
+    text-align: right;
+}
+
+/* Volume slider styling */
+.sonos-modal-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    background: #444;
+    border-radius: 3px;
+    outline: none;
+}
+
+.sonos-modal-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    background: #fff;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform 0.1s ease;
+}
+
+.sonos-modal-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+}
+
+.sonos-modal-slider::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: #fff;
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+}
+
+.sonos-modal-slider::-moz-range-track {
+    height: 6px;
+    background: #444;
+    border-radius: 3px;
+}
