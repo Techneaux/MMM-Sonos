@@ -37,7 +37,7 @@
 .sonos-group.clickable {
     cursor: pointer;
     transition: background-color 0.2s ease;
-    padding: 8px;
+    padding: 0 8px;
     border-radius: 6px;
     margin-bottom: 8px;
 }
