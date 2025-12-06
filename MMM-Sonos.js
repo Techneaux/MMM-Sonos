@@ -17,7 +17,7 @@ Module.register('MMM-Sonos', {
         this.sendSocketNotification('SONOS_START', {
             listenWithPolling: this.config.listenWithPolling,
             pollingTime: this.config.pollingTimeout ?? 5000,
-            rooms: this.config.rooms || [],
+            rooms: this.config.rooms,
         });
     },
 
