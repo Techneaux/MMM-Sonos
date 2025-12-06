@@ -91,3 +91,5 @@ typings/
 
 .idea
 
+# Package lock
+package-lock.json
