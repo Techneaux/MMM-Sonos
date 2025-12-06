@@ -6,12 +6,28 @@ module.exports = NodeHelper.create({
     discovery: null,
     asyncDevice: null,
     config: null,
+    subscribedDevices: [],
+    pollingIntervals: [],
 
     init: function () {
         this.discovery = new AsyncDeviceDiscovery();
     },
 
     stop: function () {
+        // Clear polling intervals
+        this.pollingIntervals.forEach(id => clearInterval(id));
+        this.pollingIntervals = [];
+
+        // Remove event listeners from subscribed devices
+        this.subscribedDevices.forEach(device => {
+            device.removeAllListeners('CurrentTrack');
+            device.removeAllListeners('Volume');
+            device.removeAllListeners('Muted');
+            device.removeAllListeners('PlayState');
+        });
+        this.subscribedDevices = [];
+
+        // Stop global listener
         if (listener.isListening()) {
             listener.stopListener().then(() => {
                 console.debug('Stopped all listeners to Sonos devices');
@@ -103,8 +119,12 @@ module.exports = NodeHelper.create({
     },
 
     setListenersPolling: function (groups, pollingTimeout) {
+        // Clear existing polling intervals before adding new ones
+        this.pollingIntervals.forEach(id => clearInterval(id));
+        this.pollingIntervals = [];
+
         groups.forEach(group => {
-            console.log(`Registering listeners for group "${group.Name}" (host "${group.host}")`);
+            console.log(`Registering polling for group "${group.Name}" (host "${group.host}")`);
 
             const sonos = group.CoordinatorDevice();
             let lastTrack = null;
@@ -112,71 +132,78 @@ module.exports = NodeHelper.create({
             let lastMute = null;
             let lastState = null;
 
-            // Every 5 seconds
-            setInterval(() => {
-                //poll the current track
-                sonos.currentTrack().then(track => {
-                    if (lastTrack && lastTrack.title === track.title && lastTrack.artist === track.artist)
-                        return
+            const intervalId = setInterval(() => {
+                // Poll all values in parallel
+                Promise.all([
+                    sonos.currentTrack(),
+                    sonos.getVolume(),
+                    sonos.getMuted(),
+                    sonos.getCurrentState()
+                ]).then(([track, volume, isMuted, state]) => {
+                    // Handle track changes
+                    if (!lastTrack || lastTrack.title !== track.title || lastTrack.artist !== track.artist) {
+                        console.log(`[Group ${group.Name} - ${group.host}] Track changed to "${track.title}" by "${track.artist}"`);
+                        lastTrack = track;
+                        this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', {
+                            group,
+                            track
+                        });
+                    }
 
-                    console.log(`[Group ${group.Name} - ${group.host}] Track changed to "${track.title}" by "${track.artist}"`);
-                    lastTrack = track;
-                    this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', {
-                        group,
-                        track
-                    })
-                }).catch(() => { })
+                    // Handle volume changes
+                    if (lastVolume !== volume) {
+                        console.log(`[Group ${group.Name} - ${group.host}] Volume changed to "${volume}"`);
+                        lastVolume = volume;
+                        this.sendSocketNotification('SET_SONOS_VOLUME', {
+                            group,
+                            volume
+                        });
+                    }
 
-                //poll the volume
-                sonos.getVolume().then(volume => {
-                    if (lastVolume && lastVolume === volume)
-                        return
-                    console.log(`[Group ${group.Name} - ${group.host}] Volume changed to "${volume}"`)
-                    lastVolume = volume
-                    this.sendSocketNotification('SET_SONOS_VOLUME', {
-                        group,
-                        volume
-                    })
-                }).catch(() => { })
+                    // Handle mute changes
+                    const currentIsMuted = isMuted ? 'muted' : 'unmuted';
+                    if (lastMute !== currentIsMuted) {
+                        console.log(`[Group ${group.Name} - ${group.host}] Group is ${currentIsMuted}`);
+                        lastMute = currentIsMuted;
+                        this.sendSocketNotification('SET_SONOS_MUTE', {
+                            group,
+                            isMuted
+                        });
+                    }
 
-                //poll the mute state
-                sonos.getMuted().then(isMuted => {
-                    const currentIsMuted = isMuted ? 'muted' : 'unmuted'
-                    if (lastMute && lastMute === currentIsMuted)
-                        return
-                    console.log(`[Group ${group.Name} - ${group.host}] Group is ${currentIsMuted}`)
-                    lastMute = currentIsMuted
-                    this.sendSocketNotification('SET_SONOS_MUTE', {
-                        group,
-                        isMuted
-                    })
-                }).catch(() => { })
+                    // Handle play state changes
+                    if (lastState !== state) {
+                        console.log(`[Group ${group.Name} - ${group.host}] Play state change to "${state}"`);
+                        lastState = state;
+                        this.sendSocketNotification('SET_SONOS_PLAY_STATE', {
+                            group,
+                            state
+                        });
+                    }
+                }).catch(error => {
+                    console.error(`[MMM-Sonos] Failed to poll group "${group.Name}": ${error.message}`);
+                });
+            }, pollingTimeout);
 
-                //poll the play state
-                sonos.getCurrentState().then(state => {
-                    if (lastState && lastState === state)
-                        return
-                    console.log(`[Group ${group.Name} - ${group.host}] Play state change to "${state}"`)
-                    lastState = state;
-                    this.sendSocketNotification('SET_SONOS_PLAY_STATE', {
-                        group,
-                        state
-                    })
-                }).catch(() => { })
-
-            }, pollingTimeout)
-        })
+            this.pollingIntervals.push(intervalId);
+        });
     },
 
     setListeners: function (groups) {
+        // Clean up existing listeners before adding new ones
+        this.subscribedDevices.forEach(device => {
+            device.removeAllListeners('CurrentTrack');
+            device.removeAllListeners('Volume');
+            device.removeAllListeners('Muted');
+            device.removeAllListeners('PlayState');
+        });
+        this.subscribedDevices = [];
+
         groups.forEach(group => {
             console.log(`Registering listeners for group "${group.Name}" (host "${group.host}")`);
 
             const sonos = group.CoordinatorDevice();
-
-            sonos.on('Mute', isMuted => {
-                console.log('This speaker is %s.', isMuted ? 'muted' : 'unmuted')
-            });
+            this.subscribedDevices.push(sonos);
 
             sonos.on('CurrentTrack', track => {
                 console.log(`[Group ${group.Name} - ${group.host}] Track changed to "${track.title}" by "${track.artist}"`);
