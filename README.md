@@ -74,11 +74,13 @@ These options help prevent the module from silently stopping updates due to netw
 
 #### Listening Modes
 
-- **Hybrid mode** (default, `hybridMode: true`): Uses events for instant updates, plus background polling every 30s to verify the connection is working. If polling fails for 5 minutes, triggers automatic rediscovery. **Recommended for most users.**
+- **Hybrid mode** (default, `hybridMode: true`): Uses events for instant updates, plus background polling every 30s to verify the connection is working. If no updates are received for 5 minutes, triggers automatic rediscovery. **Recommended for most users.**
 
 - **Events-only mode** (`hybridMode: false`): Uses only UPnP event subscriptions. More efficient but cannot automatically recover if events silently stop working.
 
 - **Polling-only mode** (`listenWithPolling: true`): Polls Sonos devices at regular intervals. Use if events are consistently unreliable on your network.
+
+**Note:** If multiple modes are configured, precedence is: polling-only > hybrid > events-only.
 
 #### Timeout Configuration
 

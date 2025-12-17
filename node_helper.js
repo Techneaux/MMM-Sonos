@@ -59,6 +59,9 @@ module.exports = NodeHelper.create({
     },
 
     stop: function () {
+        // Reset rediscovery flag to ensure clean shutdown
+        this.isRediscovering = false;
+
         // Stop watchdog timer
         this.stopWatchdog();
 
@@ -671,6 +674,8 @@ module.exports = NodeHelper.create({
                             });
                         }
                     }
+                }).catch(error => {
+                    console.error(`[MMM-Sonos] Unexpected error in hybrid polling for "${group.Name}": ${error.message}`);
                 });
             }, backupPollingInterval);
 
