@@ -8,6 +8,18 @@ Module.register('MMM-Sonos', {
         listenWithPolling: false,
         pollingTimeout: 5000,
         rooms: [],
+        // Reliability options
+        hybridMode: true,               // Use events + backup polling for reliable self-healing (recommended)
+        hybridPollingInterval: 30000,   // Backup polling interval in hybrid mode (30s)
+        watchdogInterval: 60000,        // Check for silence every 1 minute
+        maxSilentPeriod: 300000,        // Rediscover after 5 minutes of silence
+        maxConsecutiveFailures: 5,      // Polling mode: rediscover after N consecutive failures
+        timeouts: {
+            discovery: 10000,           // 10s for device discovery
+            subscribe: 5000,            // 5s for listener subscription
+            apiCall: 5000,              // 5s for regular API calls
+            getAllGroups: 10000         // 10s for getting all groups
+        }
     },
 
     items: {},
@@ -22,6 +34,13 @@ Module.register('MMM-Sonos', {
             listenWithPolling: this.config.listenWithPolling,
             pollingTime: this.config.pollingTimeout ?? 5000,
             rooms: this.config.rooms,
+            // Reliability options
+            hybridMode: this.config.hybridMode,
+            hybridPollingInterval: this.config.hybridPollingInterval,
+            watchdogInterval: this.config.watchdogInterval,
+            maxSilentPeriod: this.config.maxSilentPeriod,
+            maxConsecutiveFailures: this.config.maxConsecutiveFailures,
+            timeouts: this.config.timeouts,
         });
     },
 
