@@ -58,3 +58,52 @@ then add the module to your MagicMirror's configuration. Here is an example:
 | listenWithPolling | When the default events won't work with the sonos, it is possible to poll the data | `false` | No |
 | pollingTimeout | Polling timeout in milliseconds, only works when `listenWithPolling` is set to `true` | 5000 | No |
 | rooms | Array of room names to display. If empty, all rooms are shown. Case-insensitive. When speakers are grouped, the group is shown if any member matches. | `[]` | No |
+
+### Reliability Options
+
+These options help prevent the module from silently stopping updates due to network issues or Sonos device problems.
+
+| Configuration key | Description | Default | Required |
+| --- | --- | --- | --- |
+| hybridMode | Use events + background polling for reliable self-healing. Recommended. | `true` | No |
+| hybridPollingInterval | Backup polling interval in hybrid mode (milliseconds) | 30000 | No |
+| watchdogInterval | How often to check for polling silence in hybrid mode (milliseconds) | 60000 | No |
+| maxSilentPeriod | How long without successful polls before triggering rediscovery (milliseconds) | 300000 | No |
+| maxConsecutiveFailures | In polling-only mode, how many consecutive failures before rediscovery | 5 | No |
+| timeouts | Object with timeout values for API calls (see below) | See defaults | No |
+
+#### Listening Modes
+
+- **Hybrid mode** (default, `hybridMode: true`): Uses events for instant updates, plus background polling every 30s to verify the connection is working. If no updates are received for 5 minutes, triggers automatic rediscovery. **Recommended for most users.**
+
+- **Events-only mode** (`hybridMode: false`): Uses only UPnP event subscriptions. More efficient but cannot automatically recover if events silently stop working.
+
+- **Polling-only mode** (`listenWithPolling: true`): Polls Sonos devices at regular intervals. Use if events are consistently unreliable on your network.
+
+**Note:** If multiple modes are configured, precedence is: polling-only > hybrid > events-only.
+
+#### Timeout Configuration
+
+The `timeouts` option accepts an object with the following keys:
+
+```javascript
+timeouts: {
+    discovery: 10000,    // Timeout for device discovery (ms)
+    subscribe: 5000,     // Timeout for listener subscription (ms)
+    apiCall: 5000,       // Timeout for regular API calls (ms)
+    getAllGroups: 10000  // Timeout for getting all groups (ms)
+}
+```
+
+### Troubleshooting
+
+**Module stops updating but doesn't crash:**
+With the default hybrid mode, the module will automatically recover within 5 minutes. If you want faster recovery:
+1. Reduce `maxSilentPeriod` (e.g., 120000 for 2 minutes)
+2. Reduce `hybridPollingInterval` for more frequent checks
+
+**Frequent rediscovery cycles:**
+If you see many "Triggering rediscovery" messages in the logs, your Sonos devices may have intermittent connectivity. Try:
+1. Increasing `maxSilentPeriod` to reduce false positives
+2. Checking your network stability
+3. Ensuring Sonos devices have strong WiFi signal
