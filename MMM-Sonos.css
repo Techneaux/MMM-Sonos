@@ -1,5 +1,6 @@
 .sonos {
     max-width: 330px;
+    margin: 0 auto;
     text-align: center;
 }
 
@@ -11,7 +12,8 @@
 }
 
 .metadata {
-    display: inline-flex;
+    display: flex;
+    justify-content: center;
 }
 .metadata > span {
     display: flex;
