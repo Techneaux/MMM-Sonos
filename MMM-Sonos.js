@@ -1,5 +1,6 @@
 Module.register('MMM-Sonos', {
     defaults: {
+        debug: false,               // Enable debug logging
         animationSpeed: 1000,
         showFullGroupName: false,
         showArtist: true,
@@ -31,6 +32,7 @@ Module.register('MMM-Sonos', {
     start: function () {
         Log.log('Sonos frontend started');
         this.sendSocketNotification('SONOS_START', {
+            debug: this.config.debug,
             listenWithPolling: this.config.listenWithPolling,
             pollingTime: this.config.pollingTimeout ?? 5000,
             rooms: this.config.rooms,
@@ -460,5 +462,10 @@ Module.register('MMM-Sonos', {
         }
         this.modalElement = null;  // Clear reference to ensure proper recreation
         this.closeSonosModal();
+    },
+
+    resume: function() {
+        // Refresh the DOM when module is shown again (e.g., after MMM-Pages navigation)
+        this.updateDom(this.config.animationSpeed);
     }
 });
