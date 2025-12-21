@@ -28,6 +28,7 @@ module.exports = NodeHelper.create({
     discovery: null,
     asyncDevice: null,
     config: null,
+    debug: false,
     subscribedDevices: [],
     pollingIntervals: [],
     groupsById: {},
@@ -51,6 +52,12 @@ module.exports = NodeHelper.create({
             console.error(`[MMM-Sonos] Listener error: ${error.message}`);
             this.handleListenerError(error);
         });
+    },
+
+    debugLog: function (message) {
+        if (this.debug) {
+            console.log(`[MMM-Sonos] [DEBUG] ${message}`);
+        }
     },
 
     handleListenerError: function(error) {
@@ -83,7 +90,7 @@ module.exports = NodeHelper.create({
         // Stop global listener
         if (listener.isListening()) {
             listener.stopListener().then(() => {
-                console.debug('[MMM-Sonos] Stopped all listeners to Sonos devices');
+                this.debugLog('Stopped all listeners to Sonos devices');
             }).catch(error => {
                 console.error(`[MMM-Sonos] Failed to stop listeners to Sonos devices, connections might be dangling: ${error.message}`);
             });
@@ -93,7 +100,8 @@ module.exports = NodeHelper.create({
     socketNotificationReceived: function (id, payload) {
         switch (id) {
             case 'SONOS_START':
-                this.config = payload
+                this.config = payload;
+                this.debug = payload.debug || false;
                 this.discoverGroups();
                 break;
             case 'SONOS_TOGGLE_PLAY_PAUSE':
@@ -148,7 +156,7 @@ module.exports = NodeHelper.create({
             console.error(`[MMM-Sonos] Failed to get groups: ${error.message}. Retrying in ${timeout} seconds ...`);
             if (listener.isListening()) {
                 listener.stopListener().then(() => {
-                    console.debug('[MMM-Sonos] Stopped all listeners to Sonos devices');
+                    this.debugLog('Stopped all listeners to Sonos devices');
                 }).catch(error => {
                     console.error(`[MMM-Sonos] Failed to stop listeners to Sonos devices, connections might be dangling: ${error.message}`);
                 });
@@ -375,7 +383,7 @@ module.exports = NodeHelper.create({
     triggerPollingRediscovery: function() {
         // Prevent re-entrant calls
         if (this.isRediscovering) {
-            console.debug('[MMM-Sonos] Rediscovery already in progress, skipping');
+            this.debugLog('Rediscovery already in progress, skipping');
             return;
         }
         this.isRediscovering = true;
@@ -478,7 +486,7 @@ module.exports = NodeHelper.create({
             const timeSinceLastUpdate = Date.now() - this.lastUpdateTimestamp;
             const secondsSinceUpdate = Math.round(timeSinceLastUpdate / 1000);
 
-            console.debug(`[MMM-Sonos] Watchdog check: ${secondsSinceUpdate}s since last update`);
+            this.debugLog(`Watchdog check: ${secondsSinceUpdate}s since last update`);
 
             if (timeSinceLastUpdate > maxSilentPeriod) {
                 console.warn(`[MMM-Sonos] No updates received for ${secondsSinceUpdate}s. Triggering rediscovery...`);
@@ -503,7 +511,7 @@ module.exports = NodeHelper.create({
     triggerRediscovery: function() {
         // Prevent re-entrant calls
         if (this.isRediscovering) {
-            console.debug('[MMM-Sonos] Rediscovery already in progress, skipping');
+            this.debugLog('Rediscovery already in progress, skipping');
             return;
         }
         this.isRediscovering = true;
