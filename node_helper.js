@@ -33,11 +33,19 @@ module.exports = NodeHelper.create({
     pollingIntervals: [],
     groupsById: {},
 
-    // Watchdog properties for detecting silent failures in events mode
-    lastUpdateTimestamp: null,
-    watchdogTimer: null,
+    // Groups reference for health checking
+    groups: [],
 
-    // Polling failure tracking
+    // Per-group health state for adaptive polling and failure detection
+    groupHealth: {},
+
+    // Subscription health check timer (runs every 5 min when playing)
+    subscriptionCheckTimer: null,
+
+    // Adaptive polling timeout (setTimeout-based for dynamic intervals)
+    pollTimeout: null,
+
+    // Polling failure tracking (for polling-only mode)
     pollingFailureCounts: {},
 
     // Prevent re-entrant rediscovery calls
@@ -69,13 +77,26 @@ module.exports = NodeHelper.create({
         // Reset rediscovery flag to ensure clean shutdown
         this.isRediscovering = false;
 
-        // Stop watchdog timer
-        this.stopWatchdog();
+        // Clear subscription health check timer
+        if (this.subscriptionCheckTimer) {
+            clearInterval(this.subscriptionCheckTimer);
+            this.subscriptionCheckTimer = null;
+        }
 
-        // Clear polling intervals
+        // Clear adaptive polling timeout
+        if (this.pollTimeout) {
+            clearTimeout(this.pollTimeout);
+            this.pollTimeout = null;
+        }
+
+        // Clear polling intervals (for polling-only mode)
         this.pollingIntervals.forEach(id => clearInterval(id));
         this.pollingIntervals = [];
         this.pollingFailureCounts = {};
+
+        // Clear group health state
+        this.groupHealth = {};
+        this.groups = [];
 
         // Remove event listeners from subscribed devices
         this.subscribedDevices.forEach(device => {
@@ -469,43 +490,233 @@ module.exports = NodeHelper.create({
         // "events are broken" and "nothing is playing". Use hybrid mode for self-healing.
     },
 
-    // Watchdog methods for hybrid mode - detects when polling stops receiving responses
-    startWatchdog: function() {
-        // Don't start watchdog in polling-only mode - it has its own failure detection
-        if (this.config && this.config.listenWithPolling) {
+    // Subscription health check - verifies UPnP subscriptions are alive
+    startSubscriptionHealthCheck: function() {
+        if (!this.config?.autoResubscribe) {
+            this.debugLog('Auto-resubscribe disabled, skipping subscription health check');
             return;
         }
 
-        this.stopWatchdog();
-        this.lastUpdateTimestamp = Date.now();
-
-        const watchdogInterval = this.config?.watchdogInterval || 60000;  // Check every 1 minute
-        const maxSilentPeriod = this.config?.maxSilentPeriod || 300000;   // 5 minutes
-
-        this.watchdogTimer = setInterval(() => {
-            const timeSinceLastUpdate = Date.now() - this.lastUpdateTimestamp;
-            const secondsSinceUpdate = Math.round(timeSinceLastUpdate / 1000);
-
-            this.debugLog(`Watchdog check: ${secondsSinceUpdate}s since last update`);
-
-            if (timeSinceLastUpdate > maxSilentPeriod) {
-                console.warn(`[MMM-Sonos] No updates received for ${secondsSinceUpdate}s. Triggering rediscovery...`);
-                this.triggerRediscovery();
-            }
-        }, watchdogInterval);
-
-        console.log(`[MMM-Sonos] Watchdog started (check interval: ${watchdogInterval}ms, max silent period: ${maxSilentPeriod}ms)`);
-    },
-
-    stopWatchdog: function() {
-        if (this.watchdogTimer) {
-            clearInterval(this.watchdogTimer);
-            this.watchdogTimer = null;
+        // Clear any existing timer
+        if (this.subscriptionCheckTimer) {
+            clearInterval(this.subscriptionCheckTimer);
         }
+
+        const checkInterval = this.config?.subscriptionCheckInterval || 300000; // 5 min default
+
+        this.subscriptionCheckTimer = setInterval(() => {
+            if (!this.isAnyGroupPlaying()) {
+                this.debugLog('Skipping subscription check - no music playing');
+                return;
+            }
+
+            this.debugLog('Running subscription health check...');
+
+            this.groups.forEach(group => {
+                const device = group.CoordinatorDevice();
+                this.renewDeviceSubscriptions(device, group);
+            });
+        }, checkInterval);
+
+        console.log(`[MMM-Sonos] Subscription health check started (interval: ${checkInterval}ms)`);
     },
 
-    updateWatchdogTimestamp: function() {
-        this.lastUpdateTimestamp = Date.now();
+    renewDeviceSubscriptions: function(device, group) {
+        // The library stores subscription state on the device
+        // Note: _deviceSubscription is a private property, but no public API exists
+        const subscription = device._deviceSubscription;
+
+        if (!subscription) {
+            this.debugLog(`No subscription found for "${group.Name}", re-subscribing`);
+            this.resubscribeDevice(group);
+            return;
+        }
+
+        const timeouts = this.config?.timeouts || DEFAULT_TIMEOUTS;
+        const renewTimeout = timeouts.apiCall || 5000;
+
+        withTimeout(
+            subscription.renewAllSubscriptions(),
+            renewTimeout,
+            `Subscription renewal timed out for "${group.Name}"`
+        )
+            .then(() => {
+                this.debugLog(`Subscription healthy for "${group.Name}"`);
+            })
+            .catch(err => {
+                console.warn(`[MMM-Sonos] Subscription renewal failed for "${group.Name}": ${err.message}`);
+                // Full re-subscribe to ensure proper subscription creation
+                this.resubscribeDevice(group);
+            });
+    },
+
+    resubscribeDevice: function(group) {
+        console.warn(`[MMM-Sonos] Re-subscribing "${group.Name}"`);
+
+        const device = group.CoordinatorDevice();
+
+        // Remove old event handlers
+        device.removeAllListeners('CurrentTrack');
+        device.removeAllListeners('Volume');
+        device.removeAllListeners('Muted');
+        device.removeAllListeners('PlayState');
+        device.removeAllListeners('error');
+
+        // Cancel old subscriptions if they exist
+        const subscription = device._deviceSubscription;
+        const cancelPromise = subscription
+            ? subscription.cancelAllSubscriptions().catch(() => {})
+            : Promise.resolve();
+
+        cancelPromise.finally(() => {
+            listener.subscribeTo(device)
+                .then(() => {
+                    console.log(`[MMM-Sonos] Re-subscribed to "${group.Name}"`);
+                    this.attachEventHandlers(group, device);
+                })
+                .catch(err => {
+                    console.error(`[MMM-Sonos] Re-subscribe failed: ${err.message}`);
+                    this.triggerRediscovery();
+                });
+        });
+    },
+
+    attachEventHandlers: function(group, device) {
+        const groupId = group.ID;
+
+        // Remove any existing listeners to prevent duplicates when re-attaching
+        device.removeAllListeners('CurrentTrack');
+        device.removeAllListeners('Volume');
+        device.removeAllListeners('Muted');
+        device.removeAllListeners('PlayState');
+        device.removeAllListeners('error');
+
+        // Ensure device is in subscribedDevices list
+        if (!this.subscribedDevices.includes(device)) {
+            this.subscribedDevices.push(device);
+        }
+
+        device.on('error', error => {
+            console.error(`[MMM-Sonos] [${group.Name}] Device error: ${error.message}`);
+        });
+
+        device.on('CurrentTrack', track => {
+            console.log(`[MMM-Sonos] [${group.Name}] Track: "${track.title}"`);
+            this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', { group, track });
+        });
+
+        device.on('Volume', volume => {
+            console.log(`[MMM-Sonos] [${group.Name}] Volume: ${volume}`);
+            this.sendSocketNotification('SET_SONOS_VOLUME', { group, volume });
+        });
+
+        device.on('Muted', isMuted => {
+            console.log(`[MMM-Sonos] [${group.Name}] Muted: ${isMuted}`);
+            this.sendSocketNotification('SET_SONOS_MUTE', { group, isMuted });
+        });
+
+        device.on('PlayState', state => {
+            console.log(`[MMM-Sonos] [${group.Name}] State: ${state}`);
+            this.groupHealth[groupId].playState = state;
+            this.sendSocketNotification('SET_SONOS_PLAY_STATE', { group, state });
+        });
+    },
+
+    // Adaptive polling methods
+    isAnyGroupPlaying: function() {
+        return Object.values(this.groupHealth).some(
+            h => h.playState === 'playing'
+        );
+    },
+
+    getPollingInterval: function() {
+        const playingInterval = this.config?.pollingIntervalPlaying || 15000;
+        const idleInterval = this.config?.pollingIntervalIdle || 60000;
+        return this.isAnyGroupPlaying() ? playingInterval : idleInterval;
+    },
+
+    schedulePoll: function() {
+        // Clear any existing timeout
+        if (this.pollTimeout) {
+            clearTimeout(this.pollTimeout);
+        }
+
+        const interval = this.getPollingInterval();
+
+        this.pollTimeout = setTimeout(() => {
+            this.pollAllGroups().finally(() => {
+                this.schedulePoll();
+            });
+        }, interval);
+    },
+
+    pollAllGroups: function() {
+        const promises = this.groups.map(group => this.pollGroup(group));
+        return Promise.allSettled(promises);
+    },
+
+    pollGroup: function(group) {
+        const device = group.CoordinatorDevice();
+        const health = this.groupHealth[group.ID];
+        const timeouts = this.config?.timeouts || DEFAULT_TIMEOUTS;
+        const apiTimeout = timeouts.apiCall;
+        const maxFailures = this.config?.maxConsecutiveFailures || 3;
+
+        return Promise.allSettled([
+            withTimeout(device.currentTrack(), apiTimeout),
+            withTimeout(device.getVolume(), apiTimeout),
+            withTimeout(device.getMuted(), apiTimeout),
+            withTimeout(device.getCurrentState(), apiTimeout)
+        ]).then(results => {
+            const anySucceeded = results.some(r => r.status === 'fulfilled');
+
+            if (!anySucceeded) {
+                // All polls failed
+                health.consecutiveFailures++;
+                console.error(`[MMM-Sonos] Poll failed for "${group.Name}" (${health.consecutiveFailures}/${maxFailures})`);
+
+                if (health.consecutiveFailures >= maxFailures) {
+                    this.triggerRediscovery();
+                }
+                return;
+            }
+
+            // Reset failure count on success
+            health.consecutiveFailures = 0;
+
+            // Track last known values to avoid sending duplicate updates
+            if (results[0].status === 'fulfilled' && results[0].value) {
+                const track = results[0].value;
+                if (!health.lastTrack || health.lastTrack.title !== track.title || health.lastTrack.artist !== track.artist) {
+                    health.lastTrack = track;
+                    this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', { group, track });
+                }
+            }
+
+            if (results[1].status === 'fulfilled') {
+                const volume = results[1].value;
+                if (health.lastVolume !== volume) {
+                    health.lastVolume = volume;
+                    this.sendSocketNotification('SET_SONOS_VOLUME', { group, volume });
+                }
+            }
+
+            if (results[2].status === 'fulfilled') {
+                const isMuted = results[2].value;
+                if (health.lastMuted !== isMuted) {
+                    health.lastMuted = isMuted;
+                    this.sendSocketNotification('SET_SONOS_MUTE', { group, isMuted });
+                }
+            }
+
+            if (results[3].status === 'fulfilled') {
+                const state = results[3].value;
+                if (health.playState !== state) {
+                    health.playState = state;
+                    this.sendSocketNotification('SET_SONOS_PLAY_STATE', { group, state });
+                }
+            }
+        });
     },
 
     triggerRediscovery: function() {
@@ -516,8 +727,19 @@ module.exports = NodeHelper.create({
         }
         this.isRediscovering = true;
 
-        console.log('[MMM-Sonos] Triggering rediscovery due to watchdog timeout');
-        this.stopWatchdog();
+        console.log('[MMM-Sonos] Triggering rediscovery...');
+
+        // Clear subscription health check timer
+        if (this.subscriptionCheckTimer) {
+            clearInterval(this.subscriptionCheckTimer);
+            this.subscriptionCheckTimer = null;
+        }
+
+        // Clear adaptive polling timeout
+        if (this.pollTimeout) {
+            clearTimeout(this.pollTimeout);
+            this.pollTimeout = null;
+        }
 
         // Clean up existing state
         this.subscribedDevices.forEach(device => {
@@ -528,6 +750,8 @@ module.exports = NodeHelper.create({
             device.removeAllListeners('error');
         });
         this.subscribedDevices = [];
+        this.groupHealth = {};
+        this.groups = [];
 
         if (listener.isListening()) {
             listener.stopListener().catch(e => {
@@ -544,9 +768,12 @@ module.exports = NodeHelper.create({
         }, 2000);
     },
 
-    // Hybrid mode: events + background polling for maximum reliability
+    // Hybrid mode: events + adaptive polling for maximum reliability
     setListenersHybrid: function(groups) {
-        // Set up event listeners (same as setListeners but without starting watchdog yet)
+        // Store groups reference for health checking
+        this.groups = groups;
+
+        // Clean up existing listeners
         this.subscribedDevices.forEach(device => {
             device.removeAllListeners('CurrentTrack');
             device.removeAllListeners('Volume');
@@ -556,142 +783,39 @@ module.exports = NodeHelper.create({
         });
         this.subscribedDevices = [];
 
-        // Clear any existing polling intervals
-        this.pollingIntervals.forEach(id => clearInterval(id));
-        this.pollingIntervals = [];
+        // Clear any existing polling
+        if (this.pollTimeout) {
+            clearTimeout(this.pollTimeout);
+            this.pollTimeout = null;
+        }
 
+        // Initialize health state for each group
+        this.groupHealth = {};
+        groups.forEach(group => {
+            this.groupHealth[group.ID] = {
+                playState: 'unknown',
+                consecutiveFailures: 0,
+                lastTrack: null,
+                lastVolume: null,
+                lastMuted: null
+            };
+        });
+
+        // Set up event listeners for each group
         groups.forEach(group => {
             console.log(`[MMM-Sonos] Registering hybrid listeners for group "${group.Name}" (host "${group.host}")`);
-
-            const sonos = group.CoordinatorDevice();
-            this.subscribedDevices.push(sonos);
-
-            // Add error handler for this device
-            sonos.on('error', error => {
-                console.error(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Device error: ${error.message}`);
-            });
-
-            sonos.on('CurrentTrack', track => {
-                this.updateWatchdogTimestamp();
-                console.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Track changed to "${track.title}" by "${track.artist}"`);
-                this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', {
-                    group,
-                    track
-                });
-            });
-
-            sonos.on('Volume', volume => {
-                this.updateWatchdogTimestamp();
-                console.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Volume changed to "${volume}"`);
-                this.sendSocketNotification('SET_SONOS_VOLUME', {
-                    group,
-                    volume
-                });
-            });
-
-            sonos.on('Muted', isMuted => {
-                this.updateWatchdogTimestamp();
-                console.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Group is ${isMuted ? 'muted' : 'unmuted'}`);
-                this.sendSocketNotification('SET_SONOS_MUTE', {
-                    group,
-                    isMuted
-                });
-            });
-
-            sonos.on('PlayState', state => {
-                this.updateWatchdogTimestamp();
-                console.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Play state change to "${state}"`);
-                this.sendSocketNotification('SET_SONOS_PLAY_STATE', {
-                    group,
-                    state
-                });
-            });
+            const device = group.CoordinatorDevice();
+            this.attachEventHandlers(group, device);
         });
 
-        // Set up background polling as backup (with change detection to avoid unnecessary re-renders)
-        const backupPollingInterval = this.config?.hybridPollingInterval || 30000;
-        const timeouts = this.config?.timeouts || DEFAULT_TIMEOUTS;
-        const apiTimeout = timeouts.apiCall;
+        // Start adaptive polling
+        const playingInterval = this.config?.pollingIntervalPlaying || 15000;
+        const idleInterval = this.config?.pollingIntervalIdle || 60000;
+        console.log(`[MMM-Sonos] Hybrid mode: Adaptive polling (${playingInterval}ms playing / ${idleInterval}ms idle)`);
+        this.schedulePoll();
 
-        console.log(`[MMM-Sonos] Hybrid mode: Setting up backup polling every ${backupPollingInterval}ms`);
-
-        groups.forEach(group => {
-            const sonos = group.CoordinatorDevice();
-
-            // Track last known values to avoid sending duplicate updates
-            let lastTrack = null;
-            let lastVolume = null;
-            let lastMute = null;
-            let lastState = null;
-
-            const intervalId = setInterval(() => {
-                // Silently poll to verify and refresh data
-                Promise.allSettled([
-                    withTimeout(sonos.currentTrack(), apiTimeout),
-                    withTimeout(sonos.getVolume(), apiTimeout),
-                    withTimeout(sonos.getMuted(), apiTimeout),
-                    withTimeout(sonos.getCurrentState(), apiTimeout)
-                ]).then(results => {
-                    // Update watchdog if at least one poll succeeded (proves connection is alive)
-                    const anySucceeded = results.some(r => r.status === 'fulfilled');
-                    if (anySucceeded) {
-                        this.updateWatchdogTimestamp();
-                    }
-
-                    // Send updates only if data changed (acts as fallback if events are broken)
-                    if (results[0].status === 'fulfilled' && results[0].value) {
-                        const track = results[0].value;
-                        if (!lastTrack || lastTrack.title !== track.title || lastTrack.artist !== track.artist) {
-                            lastTrack = track;
-                            this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', {
-                                group,
-                                track
-                            });
-                        }
-                    }
-
-                    if (results[1].status === 'fulfilled') {
-                        const volume = results[1].value;
-                        if (lastVolume !== volume) {
-                            lastVolume = volume;
-                            this.sendSocketNotification('SET_SONOS_VOLUME', {
-                                group,
-                                volume
-                            });
-                        }
-                    }
-
-                    if (results[2].status === 'fulfilled') {
-                        const isMuted = results[2].value;
-                        if (lastMute !== isMuted) {
-                            lastMute = isMuted;
-                            this.sendSocketNotification('SET_SONOS_MUTE', {
-                                group,
-                                isMuted
-                            });
-                        }
-                    }
-
-                    if (results[3].status === 'fulfilled') {
-                        const state = results[3].value;
-                        if (lastState !== state) {
-                            lastState = state;
-                            this.sendSocketNotification('SET_SONOS_PLAY_STATE', {
-                                group,
-                                state
-                            });
-                        }
-                    }
-                }).catch(error => {
-                    console.error(`[MMM-Sonos] Unexpected error in hybrid polling for "${group.Name}": ${error.message}`);
-                });
-            }, backupPollingInterval);
-
-            this.pollingIntervals.push(intervalId);
-        });
-
-        // Start the watchdog
-        this.startWatchdog();
+        // Start subscription health check
+        this.startSubscriptionHealthCheck();
     },
 
     handleTogglePlayPause: function(groupId) {
