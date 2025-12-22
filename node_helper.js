@@ -292,7 +292,7 @@ module.exports = NodeHelper.create({
         this.pollingIntervals = [];
         this.pollingFailureCounts = {};
 
-        const maxFailures = this.config?.maxConsecutiveFailures || 5;
+        const maxFailures = this.config?.maxConsecutiveFailures || 3;
         const timeouts = this.config?.timeouts || DEFAULT_TIMEOUTS;
         const apiTimeout = timeouts.apiCall;
 
@@ -505,8 +505,18 @@ module.exports = NodeHelper.create({
         const checkInterval = this.config?.subscriptionCheckInterval || 300000; // 5 min default
 
         this.subscriptionCheckTimer = setInterval(() => {
+            // Intentional: Only check subscriptions when music is playing.
+            // When idle, the library's built-in renewal (every 25 min) handles subscriptions.
+            // If a subscription dies while idle, the first poll after playback starts catches it.
+            // This tradeoff reduces network traffic during idle periods.
             if (!this.isAnyGroupPlaying()) {
                 this.debugLog('Skipping subscription check - no music playing');
+                return;
+            }
+
+            // Guard: skip if no groups to check
+            if (!this.groups || this.groups.length === 0) {
+                this.debugLog('No groups to check');
                 return;
             }
 
@@ -602,22 +612,32 @@ module.exports = NodeHelper.create({
 
         device.on('CurrentTrack', track => {
             console.log(`[MMM-Sonos] [${group.Name}] Track: "${track.title}"`);
+            // Sync with groupHealth to prevent duplicate notifications from polling
+            const health = this.groupHealth[groupId];
+            if (health) health.lastTrack = track;
             this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', { group, track });
         });
 
         device.on('Volume', volume => {
             console.log(`[MMM-Sonos] [${group.Name}] Volume: ${volume}`);
+            // Sync with groupHealth to prevent duplicate notifications from polling
+            const health = this.groupHealth[groupId];
+            if (health) health.lastVolume = volume;
             this.sendSocketNotification('SET_SONOS_VOLUME', { group, volume });
         });
 
         device.on('Muted', isMuted => {
             console.log(`[MMM-Sonos] [${group.Name}] Muted: ${isMuted}`);
+            // Sync with groupHealth to prevent duplicate notifications from polling
+            const health = this.groupHealth[groupId];
+            if (health) health.lastMuted = isMuted;
             this.sendSocketNotification('SET_SONOS_MUTE', { group, isMuted });
         });
 
         device.on('PlayState', state => {
             console.log(`[MMM-Sonos] [${group.Name}] State: ${state}`);
-            this.groupHealth[groupId].playState = state;
+            const health = this.groupHealth[groupId];
+            if (health) health.playState = state;
             this.sendSocketNotification('SET_SONOS_PLAY_STATE', { group, state });
         });
     },
@@ -645,7 +665,10 @@ module.exports = NodeHelper.create({
 
         this.pollTimeout = setTimeout(() => {
             this.pollAllGroups().finally(() => {
-                this.schedulePoll();
+                // Only reschedule if polling hasn't been stopped (e.g., by rediscovery)
+                if (this.pollTimeout !== null) {
+                    this.schedulePoll();
+                }
             });
         }, interval);
     },
@@ -658,6 +681,13 @@ module.exports = NodeHelper.create({
     pollGroup: function(group) {
         const device = group.CoordinatorDevice();
         const health = this.groupHealth[group.ID];
+
+        // Guard: skip if group health not initialized (shouldn't happen, but defensive)
+        if (!health) {
+            this.debugLog(`No health state for group "${group.Name}", skipping poll`);
+            return Promise.resolve();
+        }
+
         const timeouts = this.config?.timeouts || DEFAULT_TIMEOUTS;
         const apiTimeout = timeouts.apiCall;
         const maxFailures = this.config?.maxConsecutiveFailures || 3;
@@ -687,7 +717,11 @@ module.exports = NodeHelper.create({
             // Track last known values to avoid sending duplicate updates
             if (results[0].status === 'fulfilled' && results[0].value) {
                 const track = results[0].value;
-                if (!health.lastTrack || health.lastTrack.title !== track.title || health.lastTrack.artist !== track.artist) {
+                // Use URI for comparison when available (unique identifier), fallback to title+artist
+                const trackChanged = track.uri
+                    ? health.lastTrack?.uri !== track.uri
+                    : !health.lastTrack || health.lastTrack.title !== track.title || health.lastTrack.artist !== track.artist;
+                if (trackChanged) {
                     health.lastTrack = track;
                     this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', { group, track });
                 }
