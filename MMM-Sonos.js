@@ -30,6 +30,12 @@ Module.register('MMM-Sonos', {
     modalElement: null,
     volumeDebounceTimer: null,
 
+    debugLog: function (message) {
+        if (this.config.debug) {
+            console.log(`[MMM-Sonos] [Frontend] ${message}`);
+        }
+    },
+
     start: function () {
         Log.log('Sonos frontend started');
         this.sendSocketNotification('SONOS_START', {
@@ -57,14 +63,16 @@ Module.register('MMM-Sonos', {
     },
 
     socketNotificationReceived: function (id, payload) {
-        Log.log(`Notification received: ${id}`, payload);
+        this.debugLog(`Notification received: ${id}`);
 
         switch (id) {
             case 'SET_SONOS_GROUPS':
+                this.debugLog(`Groups received: ${Object.keys(payload).join(', ')}`);
                 this.items = payload;
                 this.updateDom(this.config.animationSpeed);
                 break;
             case 'SET_SONOS_CURRENT_TRACK':
+                this.debugLog(`Track notification for group ${payload.group.ID}, known: ${this.items.hasOwnProperty(payload.group.ID)}`);
                 if (this.items.hasOwnProperty(payload.group.ID)) {
                     this.items[payload.group.ID] = {
                         ...this.items[payload.group.ID],
@@ -72,6 +80,8 @@ Module.register('MMM-Sonos', {
                         track: payload.track,
                     };
                     this.updateDom(this.config.animationSpeed);
+                } else {
+                    this.debugLog(`DROPPED: Group ID ${payload.group.ID} not in items (known: ${Object.keys(this.items).join(', ')})`);
                 }
                 break;
             case 'SET_SONOS_VOLUME':
@@ -82,6 +92,8 @@ Module.register('MMM-Sonos', {
                         volume: payload.volume
                     };
                     this.updateDom();
+                } else {
+                    this.debugLog(`DROPPED: Volume for unknown group ${payload.group.ID}`);
                 }
                 break;
             case 'SET_SONOS_MUTE':
@@ -92,6 +104,8 @@ Module.register('MMM-Sonos', {
                         isMuted: payload.isMuted
                     };
                     this.updateDom();
+                } else {
+                    this.debugLog(`DROPPED: Mute for unknown group ${payload.group.ID}`);
                 }
                 break;
             case 'SET_SONOS_PLAY_STATE':
@@ -102,6 +116,8 @@ Module.register('MMM-Sonos', {
                         state: payload.state
                     };
                     this.updateDom(this.config.animationSpeed);
+                } else {
+                    this.debugLog(`DROPPED: State for unknown group ${payload.group.ID}`);
                 }
                 break;
             default:
