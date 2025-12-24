@@ -1,4 +1,5 @@
 const NodeHelper = require('node_helper');
+const Log = require('logger');
 const { AsyncDeviceDiscovery, Listener: listener } = require('sonos');
 
 // Utility function to wrap promises with timeout
@@ -57,19 +58,19 @@ module.exports = NodeHelper.create({
         // Add global error handler for the listener (remove first to prevent accumulation)
         listener.removeAllListeners('error');
         listener.on('error', (error) => {
-            console.error(`[MMM-Sonos] Listener error: ${error.message}`);
+            Log.error(`[MMM-Sonos] Listener error: ${error.message}`);
             this.handleListenerError(error);
         });
     },
 
     debugLog: function (message) {
         if (this.debug) {
-            console.log(`[MMM-Sonos] [DEBUG] ${message}`);
+            Log.log(`[MMM-Sonos] [DEBUG] ${message}`);
         }
     },
 
     handleListenerError: function(error) {
-        console.error('[MMM-Sonos] Handling listener error, will rediscover...');
+        Log.error('[MMM-Sonos] Handling listener error, will rediscover...');
         this.triggerRediscovery();
     },
 
@@ -113,7 +114,7 @@ module.exports = NodeHelper.create({
             listener.stopListener().then(() => {
                 this.debugLog('Stopped all listeners to Sonos devices');
             }).catch(error => {
-                console.error(`[MMM-Sonos] Failed to stop listeners to Sonos devices, connections might be dangling: ${error.message}`);
+                Log.error(`[MMM-Sonos] Failed to stop listeners to Sonos devices, connections might be dangling: ${error.message}`);
             });
         }
     },
@@ -135,7 +136,7 @@ module.exports = NodeHelper.create({
                 this.handleSetVolume(payload.groupId, payload.volume);
                 break;
             default:
-                console.log(`Notification with ID "${id}" unsupported. Ignoring...`);
+                Log.log(`Notification with ID "${id}" unsupported. Ignoring...`);
                 break;
         }
     },
@@ -152,7 +153,7 @@ module.exports = NodeHelper.create({
                 // Remove existing ZonesChanged listener to prevent accumulation on rediscovery
                 listener.removeAllListeners('ZonesChanged');
                 listener.on('ZonesChanged', () => {
-                    console.log(`[MMM-Sonos] Zones have changed. Rediscovering all groups ...`);
+                    Log.log(`[MMM-Sonos] Zones have changed. Rediscovering all groups ...`);
                     this.discoverGroups();
                 });
                 return withTimeout(
@@ -174,12 +175,12 @@ module.exports = NodeHelper.create({
         }).catch(error => {
             attempts++;
             const timeout = Math.min(Math.pow(attempts, 2), 30);
-            console.error(`[MMM-Sonos] Failed to get groups: ${error.message}. Retrying in ${timeout} seconds ...`);
+            Log.error(`[MMM-Sonos] Failed to get groups: ${error.message}. Retrying in ${timeout} seconds ...`);
             if (listener.isListening()) {
                 listener.stopListener().then(() => {
                     this.debugLog('Stopped all listeners to Sonos devices');
                 }).catch(error => {
-                    console.error(`[MMM-Sonos] Failed to stop listeners to Sonos devices, connections might be dangling: ${error.message}`);
+                    Log.error(`[MMM-Sonos] Failed to stop listeners to Sonos devices, connections might be dangling: ${error.message}`);
                 });
             }
             this.asyncDevice = null;
@@ -229,7 +230,7 @@ module.exports = NodeHelper.create({
                 results.forEach((result, index) => {
                     if (result.status === 'rejected') {
                         const methods = ['currentTrack', 'getCurrentState', 'getVolume', 'getMuted'];
-                        console.error(`[MMM-Sonos] ${methods[index]} failed for "${group.Name}": ${result.reason?.message || result.reason}`);
+                        Log.error(`[MMM-Sonos] ${methods[index]} failed for "${group.Name}": ${result.reason?.message || result.reason}`);
                     }
                 });
 
@@ -246,7 +247,7 @@ module.exports = NodeHelper.create({
             const validItems = items.filter(item => item.track !== null);
 
             if (validItems.length === 0 && items.length > 0) {
-                console.warn('[MMM-Sonos] All groups failed to return data, will retry...');
+                Log.warn('[MMM-Sonos] All groups failed to return data, will retry...');
                 throw new Error('All groups failed to return data');
             }
 
@@ -263,22 +264,22 @@ module.exports = NodeHelper.create({
             return validItems;
         }).then(validGroups => {
             if (validGroups.length === 0) {
-                console.warn('[MMM-Sonos] No valid groups found after filtering');
+                Log.warn('[MMM-Sonos] No valid groups found after filtering');
                 return;
             }
 
             if (this.config && this.config.listenWithPolling) {
-                console.log("[MMM-Sonos] Listening with polling mode");
+                Log.log("[MMM-Sonos] Listening with polling mode");
                 this.setListenersPolling(validGroups.map(item => item.group), this.config.pollingTime);
             } else if (this.config && this.config.hybridMode) {
-                console.log("[MMM-Sonos] Listening with hybrid mode (events + backup polling)");
+                Log.log("[MMM-Sonos] Listening with hybrid mode (events + backup polling)");
                 this.setListenersHybrid(validGroups.map(item => item.group));
             } else {
-                console.log("[MMM-Sonos] Listening with events mode");
+                Log.log("[MMM-Sonos] Listening with events mode");
                 this.setListeners(validGroups.map(item => item.group));
             }
         }).catch(error => {
-            console.error(`[MMM-Sonos] Error in setGroups: ${error.message}`);
+            Log.error(`[MMM-Sonos] Error in setGroups: ${error.message}`);
             // Schedule a retry after 10 seconds
             setTimeout(() => {
                 this.discoverGroups();
@@ -297,7 +298,7 @@ module.exports = NodeHelper.create({
         const apiTimeout = timeouts.apiCall;
 
         groups.forEach(group => {
-            console.log(`[MMM-Sonos] Registering polling for group "${group.Name}" (host "${group.host}")`);
+            Log.log(`[MMM-Sonos] Registering polling for group "${group.Name}" (host "${group.host}")`);
 
             const sonos = group.CoordinatorDevice();
             let lastTrack = null;
@@ -322,10 +323,10 @@ module.exports = NodeHelper.create({
                     if (failedCount === results.length) {
                         // All calls failed - increment failure counter
                         this.pollingFailureCounts[group.ID]++;
-                        console.error(`[MMM-Sonos] All polling calls failed for "${group.Name}" (${this.pollingFailureCounts[group.ID]}/${maxFailures})`);
+                        Log.error(`[MMM-Sonos] All polling calls failed for "${group.Name}" (${this.pollingFailureCounts[group.ID]}/${maxFailures})`);
 
                         if (this.pollingFailureCounts[group.ID] >= maxFailures) {
-                            console.error(`[MMM-Sonos] Max consecutive failures reached for "${group.Name}". Triggering rediscovery...`);
+                            Log.error(`[MMM-Sonos] Max consecutive failures reached for "${group.Name}". Triggering rediscovery...`);
                             this.triggerPollingRediscovery();
                             return;
                         }
@@ -337,8 +338,14 @@ module.exports = NodeHelper.create({
                     // Handle track changes
                     if (results[0].status === 'fulfilled') {
                         const track = results[0].value;
-                        if (!lastTrack || lastTrack.title !== track.title || lastTrack.artist !== track.artist) {
-                            console.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Track changed to "${track.title}" by "${track.artist}"`);
+                        if (
+                            !lastTrack ||
+                            lastTrack.title !== track.title ||
+                            lastTrack.artist !== track.artist ||
+                            lastTrack.album !== track.album ||
+                            lastTrack.duration !== track.duration
+                        ) {
+                            Log.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Track changed to "${track.title}" by "${track.artist}"`);
                             lastTrack = track;
                             this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', {
                                 group,
@@ -346,14 +353,14 @@ module.exports = NodeHelper.create({
                             });
                         }
                     } else {
-                        console.error(`[MMM-Sonos] Failed to get current track for "${group.Name}": ${results[0].reason?.message || results[0].reason}`);
+                        Log.error(`[MMM-Sonos] Failed to get current track for "${group.Name}": ${results[0].reason?.message || results[0].reason}`);
                     }
 
                     // Handle volume changes
                     if (results[1].status === 'fulfilled') {
                         const volume = results[1].value;
                         if (lastVolume !== volume) {
-                            console.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Volume changed to "${volume}"`);
+                            this.debugLog(`[Group ${group.Name} - ${group.host}] Volume changed to "${volume}"`);
                             lastVolume = volume;
                             this.sendSocketNotification('SET_SONOS_VOLUME', {
                                 group,
@@ -361,7 +368,7 @@ module.exports = NodeHelper.create({
                             });
                         }
                     } else {
-                        console.error(`[MMM-Sonos] Failed to get volume for "${group.Name}": ${results[1].reason?.message || results[1].reason}`);
+                        Log.error(`[MMM-Sonos] Failed to get volume for "${group.Name}": ${results[1].reason?.message || results[1].reason}`);
                     }
 
                     // Handle mute changes
@@ -369,7 +376,7 @@ module.exports = NodeHelper.create({
                         const isMuted = results[2].value;
                         const currentIsMuted = isMuted ? 'muted' : 'unmuted';
                         if (lastMute !== currentIsMuted) {
-                            console.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Group is ${currentIsMuted}`);
+                            this.debugLog(`[Group ${group.Name} - ${group.host}] Group is ${currentIsMuted}`);
                             lastMute = currentIsMuted;
                             this.sendSocketNotification('SET_SONOS_MUTE', {
                                 group,
@@ -377,14 +384,14 @@ module.exports = NodeHelper.create({
                             });
                         }
                     } else {
-                        console.error(`[MMM-Sonos] Failed to get mute state for "${group.Name}": ${results[2].reason?.message || results[2].reason}`);
+                        Log.error(`[MMM-Sonos] Failed to get mute state for "${group.Name}": ${results[2].reason?.message || results[2].reason}`);
                     }
 
                     // Handle play state changes
                     if (results[3].status === 'fulfilled') {
                         const state = results[3].value;
                         if (lastState !== state) {
-                            console.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Play state change to "${state}"`);
+                            Log.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Play state change to "${state}"`);
                             lastState = state;
                             this.sendSocketNotification('SET_SONOS_PLAY_STATE', {
                                 group,
@@ -392,7 +399,7 @@ module.exports = NodeHelper.create({
                             });
                         }
                     } else {
-                        console.error(`[MMM-Sonos] Failed to get play state for "${group.Name}": ${results[3].reason?.message || results[3].reason}`);
+                        Log.error(`[MMM-Sonos] Failed to get play state for "${group.Name}": ${results[3].reason?.message || results[3].reason}`);
                     }
                 });
             }, pollingTimeout);
@@ -409,7 +416,7 @@ module.exports = NodeHelper.create({
         }
         this.isRediscovering = true;
 
-        console.log('[MMM-Sonos] Triggering rediscovery due to polling failures');
+        Log.warn('[MMM-Sonos] Triggering rediscovery due to polling failures');
 
         // Clear all polling intervals
         this.pollingIntervals.forEach(id => clearInterval(id));
@@ -420,7 +427,7 @@ module.exports = NodeHelper.create({
         this.asyncDevice = null;
         if (listener.isListening()) {
             listener.stopListener().catch(e => {
-                console.error(`[MMM-Sonos] Failed to stop listener: ${e.message}`);
+                Log.error(`[MMM-Sonos] Failed to stop listener: ${e.message}`);
             });
         }
 
@@ -443,18 +450,18 @@ module.exports = NodeHelper.create({
         this.subscribedDevices = [];
 
         groups.forEach(group => {
-            console.log(`[MMM-Sonos] Registering listeners for group "${group.Name}" (host "${group.host}")`);
+            Log.log(`[MMM-Sonos] Registering listeners for group "${group.Name}" (host "${group.host}")`);
 
             const sonos = group.CoordinatorDevice();
             this.subscribedDevices.push(sonos);
 
             // Add error handler for this device
             sonos.on('error', error => {
-                console.error(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Device error: ${error.message}`);
+                Log.error(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Device error: ${error.message}`);
             });
 
             sonos.on('CurrentTrack', track => {
-                console.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Track changed to "${track.title}" by "${track.artist}"`);
+                Log.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Track changed to "${track.title}" by "${track.artist}"`);
                 this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', {
                     group,
                     track
@@ -462,7 +469,7 @@ module.exports = NodeHelper.create({
             });
 
             sonos.on('Volume', volume => {
-                console.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Volume changed to "${volume}"`);
+                this.debugLog(`[Group ${group.Name} - ${group.host}] Volume changed to "${volume}"`);
                 this.sendSocketNotification('SET_SONOS_VOLUME', {
                     group,
                     volume
@@ -470,7 +477,7 @@ module.exports = NodeHelper.create({
             });
 
             sonos.on('Muted', isMuted => {
-                console.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Group is ${isMuted ? 'muted' : 'unmuted'}`);
+                this.debugLog(`[Group ${group.Name} - ${group.host}] Group is ${isMuted ? 'muted' : 'unmuted'}`);
                 this.sendSocketNotification('SET_SONOS_MUTE', {
                     group,
                     isMuted
@@ -478,7 +485,7 @@ module.exports = NodeHelper.create({
             });
 
             sonos.on('PlayState', state => {
-                console.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Play state change to "${state}"`);
+                Log.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Play state change to "${state}"`);
                 this.sendSocketNotification('SET_SONOS_PLAY_STATE', {
                     group,
                     state
@@ -505,6 +512,8 @@ module.exports = NodeHelper.create({
         const checkInterval = this.config?.subscriptionCheckInterval || 300000; // 5 min default
 
         this.subscriptionCheckTimer = setInterval(() => {
+            this.debugLog('Subscription health check triggered');
+
             // Intentional: Only check subscriptions when music is playing.
             // When idle, the library's built-in renewal (every 25 min) handles subscriptions.
             // If a subscription dies while idle, the first poll after playback starts catches it.
@@ -520,7 +529,7 @@ module.exports = NodeHelper.create({
                 return;
             }
 
-            this.debugLog('Running subscription health check...');
+            this.debugLog(`Running subscription health check for ${this.groups.length} groups`);
 
             this.groups.forEach(group => {
                 const device = group.CoordinatorDevice();
@@ -528,7 +537,7 @@ module.exports = NodeHelper.create({
             });
         }, checkInterval);
 
-        console.log(`[MMM-Sonos] Subscription health check started (interval: ${checkInterval}ms)`);
+        Log.log(`[MMM-Sonos] Subscription health check started (interval: ${checkInterval}ms)`);
     },
 
     renewDeviceSubscriptions: function(device, group) {
@@ -537,10 +546,12 @@ module.exports = NodeHelper.create({
         const subscription = device._deviceSubscription;
 
         if (!subscription) {
-            this.debugLog(`No subscription found for "${group.Name}", re-subscribing`);
+            this.debugLog(`[${group.Name}] No subscription object found, triggering re-subscribe`);
             this.resubscribeDevice(group);
             return;
         }
+
+        this.debugLog(`[${group.Name}] Attempting subscription renewal...`);
 
         const timeouts = this.config?.timeouts || DEFAULT_TIMEOUTS;
         const renewTimeout = timeouts.apiCall || 5000;
@@ -551,21 +562,23 @@ module.exports = NodeHelper.create({
             `Subscription renewal timed out for "${group.Name}"`
         )
             .then(() => {
-                this.debugLog(`Subscription healthy for "${group.Name}"`);
+                this.debugLog(`[${group.Name}] Subscription renewal succeeded (timeout extended)`);
             })
             .catch(err => {
-                console.warn(`[MMM-Sonos] Subscription renewal failed for "${group.Name}": ${err.message}`);
+                this.debugLog(`[${group.Name}] Subscription renewal failed: ${err.message}, triggering re-subscribe`);
+                Log.warn(`[MMM-Sonos] Subscription renewal failed for "${group.Name}": ${err.message}`);
                 // Full re-subscribe to ensure proper subscription creation
                 this.resubscribeDevice(group);
             });
     },
 
     resubscribeDevice: function(group) {
-        console.warn(`[MMM-Sonos] Re-subscribing "${group.Name}"`);
+        this.debugLog(`[${group.Name}] Starting re-subscription process...`);
 
         const device = group.CoordinatorDevice();
 
         // Remove old event handlers
+        this.debugLog(`[${group.Name}] Removing old event handlers`);
         device.removeAllListeners('CurrentTrack');
         device.removeAllListeners('Volume');
         device.removeAllListeners('Muted');
@@ -574,18 +587,22 @@ module.exports = NodeHelper.create({
 
         // Cancel old subscriptions if they exist
         const subscription = device._deviceSubscription;
+        this.debugLog(`[${group.Name}] Old subscription exists: ${!!subscription}`);
         const cancelPromise = subscription
             ? subscription.cancelAllSubscriptions().catch(() => {})
             : Promise.resolve();
 
         cancelPromise.finally(() => {
+            this.debugLog(`[${group.Name}] Calling listener.subscribeTo(device)...`);
             listener.subscribeTo(device)
                 .then(() => {
-                    console.log(`[MMM-Sonos] Re-subscribed to "${group.Name}"`);
+                    Log.log(`[MMM-Sonos] Re-subscribed to "${group.Name}" (new subscription created)`);
+                    this.debugLog(`[${group.Name}] Attaching event handlers...`);
                     this.attachEventHandlers(group, device);
                 })
                 .catch(err => {
-                    console.error(`[MMM-Sonos] Re-subscribe failed: ${err.message}`);
+                    Log.error(`[MMM-Sonos] Re-subscribe failed for "${group.Name}": ${err.message}`);
+                    this.debugLog(`[${group.Name}] Re-subscribe failed, triggering full rediscovery`);
                     this.triggerRediscovery();
                 });
         });
@@ -607,11 +624,11 @@ module.exports = NodeHelper.create({
         }
 
         device.on('error', error => {
-            console.error(`[MMM-Sonos] [${group.Name}] Device error: ${error.message}`);
+            Log.error(`[MMM-Sonos] [${group.Name}] Device error: ${error.message}`);
         });
 
         device.on('CurrentTrack', track => {
-            console.log(`[MMM-Sonos] [${group.Name}] Track: "${track.title}"`);
+            Log.log(`[MMM-Sonos] [${group.Name}] Track: "${track.title}"`);
             // Sync with groupHealth to prevent duplicate notifications from polling
             const health = this.groupHealth[groupId];
             if (health) health.lastTrack = track;
@@ -619,7 +636,7 @@ module.exports = NodeHelper.create({
         });
 
         device.on('Volume', volume => {
-            console.log(`[MMM-Sonos] [${group.Name}] Volume: ${volume}`);
+            this.debugLog(`[${group.Name}] Volume: ${volume}`);
             // Sync with groupHealth to prevent duplicate notifications from polling
             const health = this.groupHealth[groupId];
             if (health) health.lastVolume = volume;
@@ -627,7 +644,7 @@ module.exports = NodeHelper.create({
         });
 
         device.on('Muted', isMuted => {
-            console.log(`[MMM-Sonos] [${group.Name}] Muted: ${isMuted}`);
+            this.debugLog(`[${group.Name}] Muted: ${isMuted}`);
             // Sync with groupHealth to prevent duplicate notifications from polling
             const health = this.groupHealth[groupId];
             if (health) health.lastMuted = isMuted;
@@ -635,7 +652,7 @@ module.exports = NodeHelper.create({
         });
 
         device.on('PlayState', state => {
-            console.log(`[MMM-Sonos] [${group.Name}] State: ${state}`);
+            Log.log(`[MMM-Sonos] [${group.Name}] State: ${state}`);
             const health = this.groupHealth[groupId];
             if (health) health.playState = state;
             this.sendSocketNotification('SET_SONOS_PLAY_STATE', { group, state });
@@ -662,18 +679,23 @@ module.exports = NodeHelper.create({
         }
 
         const interval = this.getPollingInterval();
+        this.debugLog(`Scheduling poll in ${interval}ms`);
 
         this.pollTimeout = setTimeout(() => {
+            this.debugLog('Poll timer fired, starting poll cycle');
             this.pollAllGroups().finally(() => {
                 // Only reschedule if polling hasn't been stopped (e.g., by rediscovery)
                 if (this.pollTimeout !== null) {
                     this.schedulePoll();
+                } else {
+                    this.debugLog('Poll chain stopped (pollTimeout is null)');
                 }
             });
         }, interval);
     },
 
     pollAllGroups: function() {
+        this.debugLog(`Polling ${this.groups.length} groups`);
         const promises = this.groups.map(group => this.pollGroup(group));
         return Promise.allSettled(promises);
     },
@@ -703,7 +725,7 @@ module.exports = NodeHelper.create({
             if (!anySucceeded) {
                 // All polls failed
                 health.consecutiveFailures++;
-                console.error(`[MMM-Sonos] Poll failed for "${group.Name}" (${health.consecutiveFailures}/${maxFailures})`);
+                Log.error(`[MMM-Sonos] Poll failed for "${group.Name}" (${health.consecutiveFailures}/${maxFailures})`);
 
                 if (health.consecutiveFailures >= maxFailures) {
                     this.triggerRediscovery();
@@ -714,13 +736,22 @@ module.exports = NodeHelper.create({
             // Reset failure count on success
             health.consecutiveFailures = 0;
 
+            this.debugLog(`[${group.Name}] Poll API results: track=${results[0].status}, vol=${results[1].status}, mute=${results[2].status}, state=${results[3].status}`);
+
             // Track last known values to avoid sending duplicate updates
             if (results[0].status === 'fulfilled' && results[0].value) {
                 const track = results[0].value;
-                // Use URI for comparison when available (unique identifier), fallback to title+artist
-                const trackChanged = track.uri
-                    ? health.lastTrack?.uri !== track.uri
-                    : !health.lastTrack || health.lastTrack.title !== track.title || health.lastTrack.artist !== track.artist;
+                // Compare by metadata (title, artist, album, duration) rather than URI
+                // URI is unreliable for streaming sources (AirPlay, Google Home, Alexa)
+                // where all tracks share the same stream URI
+                const trackChanged = !health.lastTrack ||
+                    health.lastTrack.title !== track.title ||
+                    health.lastTrack.artist !== track.artist ||
+                    health.lastTrack.album !== track.album ||
+                    health.lastTrack.duration !== track.duration;
+
+                this.debugLog(`[${group.Name}] Poll track: "${track.title}" by "${track.artist}", last: "${health.lastTrack?.title || 'none'}", changed: ${trackChanged}`);
+
                 if (trackChanged) {
                     health.lastTrack = track;
                     this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', { group, track });
@@ -761,19 +792,23 @@ module.exports = NodeHelper.create({
         }
         this.isRediscovering = true;
 
-        console.log('[MMM-Sonos] Triggering rediscovery...');
+        Log.warn('[MMM-Sonos] Triggering full rediscovery...');
 
         // Clear subscription health check timer
+        this.debugLog('Clearing subscription health check timer');
         if (this.subscriptionCheckTimer) {
             clearInterval(this.subscriptionCheckTimer);
             this.subscriptionCheckTimer = null;
         }
 
         // Clear adaptive polling timeout
+        this.debugLog(`Clearing poll timeout (was: ${this.pollTimeout})`);
         if (this.pollTimeout) {
             clearTimeout(this.pollTimeout);
             this.pollTimeout = null;
         }
+
+        this.debugLog('Cleaning up existing state...');
 
         // Clean up existing state
         this.subscribedDevices.forEach(device => {
@@ -789,7 +824,7 @@ module.exports = NodeHelper.create({
 
         if (listener.isListening()) {
             listener.stopListener().catch(e => {
-                console.error(`[MMM-Sonos] Failed to stop listener during rediscovery: ${e.message}`);
+                Log.error(`[MMM-Sonos] Failed to stop listener during rediscovery: ${e.message}`);
             });
         }
 
@@ -837,7 +872,7 @@ module.exports = NodeHelper.create({
 
         // Set up event listeners for each group
         groups.forEach(group => {
-            console.log(`[MMM-Sonos] Registering hybrid listeners for group "${group.Name}" (host "${group.host}")`);
+            Log.log(`[MMM-Sonos] Registering hybrid listeners for group "${group.Name}" (host "${group.host}")`);
             const device = group.CoordinatorDevice();
             this.attachEventHandlers(group, device);
         });
@@ -845,7 +880,7 @@ module.exports = NodeHelper.create({
         // Start adaptive polling
         const playingInterval = this.config?.pollingIntervalPlaying || 15000;
         const idleInterval = this.config?.pollingIntervalIdle || 60000;
-        console.log(`[MMM-Sonos] Hybrid mode: Adaptive polling (${playingInterval}ms playing / ${idleInterval}ms idle)`);
+        Log.log(`[MMM-Sonos] Hybrid mode: Adaptive polling (${playingInterval}ms playing / ${idleInterval}ms idle)`);
         this.schedulePoll();
 
         // Start subscription health check
@@ -855,58 +890,58 @@ module.exports = NodeHelper.create({
     handleTogglePlayPause: function(groupId) {
         const group = this.groupsById[groupId];
         if (!group) {
-            console.error(`[MMM-Sonos] Group not found for ID: ${groupId}`);
+            Log.error(`[MMM-Sonos] Group not found for ID: ${groupId}`);
             return;
         }
 
         const sonos = group.CoordinatorDevice();
         sonos.togglePlayback()
             .then(() => {
-                console.log(`[MMM-Sonos] Toggle play/pause for group: ${group.Name}`);
+                this.debugLog(`Toggle play/pause for group: ${group.Name}`);
             })
             .catch(error => {
-                console.error(`[MMM-Sonos] Failed to toggle playback: ${error.message}`);
+                Log.error(`[MMM-Sonos] Failed to toggle playback: ${error.message}`);
             });
     },
 
     handleNext: function(groupId) {
         const group = this.groupsById[groupId];
         if (!group) {
-            console.error(`[MMM-Sonos] Group not found for ID: ${groupId}`);
+            Log.error(`[MMM-Sonos] Group not found for ID: ${groupId}`);
             return;
         }
 
         const sonos = group.CoordinatorDevice();
         sonos.next()
             .then(() => {
-                console.log(`[MMM-Sonos] Skip to next for group: ${group.Name}`);
+                this.debugLog(`Skip to next for group: ${group.Name}`);
             })
             .catch(error => {
-                console.error(`[MMM-Sonos] Failed to skip track: ${error.message}`);
+                Log.error(`[MMM-Sonos] Failed to skip track: ${error.message}`);
             });
     },
 
     handleSetVolume: function(groupId, volume) {
         const group = this.groupsById[groupId];
         if (!group) {
-            console.error(`[MMM-Sonos] Group not found for ID: ${groupId}`);
+            Log.error(`[MMM-Sonos] Group not found for ID: ${groupId}`);
             return;
         }
 
         // Validate volume range
         volume = Math.max(0, Math.min(100, parseInt(volume, 10)));
         if (isNaN(volume)) {
-            console.error(`[MMM-Sonos] Invalid volume value`);
+            Log.error(`[MMM-Sonos] Invalid volume value`);
             return;
         }
 
         const sonos = group.CoordinatorDevice();
         sonos.setVolume(volume)
             .then(() => {
-                console.log(`[MMM-Sonos] Set volume to ${volume} for group: ${group.Name}`);
+                this.debugLog(`Set volume to ${volume} for group: ${group.Name}`);
             })
             .catch(error => {
-                console.error(`[MMM-Sonos] Failed to set volume: ${error.message}`);
+                Log.error(`[MMM-Sonos] Failed to set volume: ${error.message}`);
             });
     }
 });
