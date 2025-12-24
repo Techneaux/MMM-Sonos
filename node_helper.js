@@ -542,10 +542,17 @@ module.exports = NodeHelper.create({
             }
 
             this.debugLog(`Running subscription health check for ${this.groups.length} groups`);
+            this.debugLog(`Listener has ${listener._deviceSubscriptions?.length || 0} total subscriptions`);
 
             this.groups.forEach(group => {
-                const device = group.CoordinatorDevice();
-                this.renewDeviceSubscriptions(device, group);
+                // Use stored device reference (not CoordinatorDevice() which returns new object each time)
+                const health = this.groupHealth[group.ID];
+                if (!health || !health.device) {
+                    this.debugLog(`[${group.Name}] No device reference stored, triggering rediscovery`);
+                    this.triggerRediscovery();
+                    return;
+                }
+                this.renewDeviceSubscriptions(health.device, group);
             });
         }, checkInterval);
 
@@ -553,13 +560,17 @@ module.exports = NodeHelper.create({
     },
 
     renewDeviceSubscriptions: function(device, group) {
-        // The library stores subscription state on the device
-        // Note: _deviceSubscription is a private property, but no public API exists
-        const subscription = device._deviceSubscription;
+        // Log device info for debugging (no branching on _isSubscribed)
+        this.debugLog(`[${group.Name}] Device ${device.host}, _isSubscribed: ${device._isSubscribed}`);
 
-        if (!subscription) {
-            this.debugLog(`[${group.Name}] No subscription object found, triggering re-subscribe`);
-            this.resubscribeDevice(group);
+        // Find the DeviceSubscription object from the listener
+        const deviceSubscription = listener._deviceSubscriptions?.find(
+            sub => sub.device === device
+        );
+
+        if (!deviceSubscription) {
+            this.debugLog(`[${group.Name}] No DeviceSubscription found, triggering rediscovery`);
+            this.triggerRediscovery();
             return;
         }
 
@@ -569,55 +580,17 @@ module.exports = NodeHelper.create({
         const renewTimeout = timeouts.apiCall || 5000;
 
         withTimeout(
-            subscription.renewAllSubscriptions(),
+            deviceSubscription.renewAllSubscriptions(),
             renewTimeout,
             `Subscription renewal timed out for "${group.Name}"`
         )
             .then(() => {
-                this.debugLog(`[${group.Name}] Subscription renewal succeeded (timeout extended)`);
+                this.debugLog(`[${group.Name}] Subscription renewal succeeded`);
             })
             .catch(err => {
-                this.debugLog(`[${group.Name}] Subscription renewal failed: ${err.message}, triggering re-subscribe`);
-                Log.warn(`[MMM-Sonos] Subscription renewal failed for "${group.Name}": ${err.message}`);
-                // Full re-subscribe to ensure proper subscription creation
-                this.resubscribeDevice(group);
+                Log.warn(`[MMM-Sonos] Renewal failed for "${group.Name}": ${err.message}, triggering rediscovery`);
+                this.triggerRediscovery();
             });
-    },
-
-    resubscribeDevice: function(group) {
-        this.debugLog(`[${group.Name}] Starting re-subscription process...`);
-
-        const device = group.CoordinatorDevice();
-
-        // Remove old event handlers
-        this.debugLog(`[${group.Name}] Removing old event handlers`);
-        device.removeAllListeners('CurrentTrack');
-        device.removeAllListeners('Volume');
-        device.removeAllListeners('Muted');
-        device.removeAllListeners('PlayState');
-        device.removeAllListeners('error');
-
-        // Cancel old subscriptions if they exist
-        const subscription = device._deviceSubscription;
-        this.debugLog(`[${group.Name}] Old subscription exists: ${!!subscription}`);
-        const cancelPromise = subscription
-            ? subscription.cancelAllSubscriptions().catch(() => {})
-            : Promise.resolve();
-
-        cancelPromise.finally(() => {
-            this.debugLog(`[${group.Name}] Calling listener.subscribeTo(device)...`);
-            listener.subscribeTo(device)
-                .then(() => {
-                    Log.log(`[MMM-Sonos] Re-subscribed to "${group.Name}" (new subscription created)`);
-                    this.debugLog(`[${group.Name}] Attaching event handlers...`);
-                    this.attachEventHandlers(group, device);
-                })
-                .catch(err => {
-                    Log.error(`[MMM-Sonos] Re-subscribe failed for "${group.Name}": ${err.message}`);
-                    this.debugLog(`[${group.Name}] Re-subscribe failed, triggering full rediscovery`);
-                    this.triggerRediscovery();
-                });
-        });
     },
 
     attachEventHandlers: function(group, device) {
@@ -840,6 +813,11 @@ module.exports = NodeHelper.create({
             });
         }
 
+        // Clear stale DeviceSubscription entries (library bug - doesn't do this itself)
+        if (listener._deviceSubscriptions) {
+            listener._deviceSubscriptions.length = 0;
+        }
+
         this.asyncDevice = null;
 
         // Start fresh discovery after a short delay
@@ -874,6 +852,7 @@ module.exports = NodeHelper.create({
         this.groupHealth = {};
         groups.forEach(group => {
             this.groupHealth[group.ID] = {
+                device: null,  // Will be set after subscription succeeds
                 playState: 'unknown',
                 consecutiveFailures: 0,
                 lastTrack: null,
@@ -891,6 +870,8 @@ module.exports = NodeHelper.create({
             return listener.subscribeTo(device)
                 .then(() => {
                     this.debugLog(`[${group.Name}] Subscription created`);
+                    // Store device reference for health check to use
+                    this.groupHealth[group.ID].device = device;
                     this.attachEventHandlers(group, device);
                 })
                 .catch(err => {
