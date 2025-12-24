@@ -338,7 +338,13 @@ module.exports = NodeHelper.create({
                     // Handle track changes
                     if (results[0].status === 'fulfilled') {
                         const track = results[0].value;
-                        if (!lastTrack || lastTrack.title !== track.title || lastTrack.artist !== track.artist) {
+                        if (
+                            !lastTrack ||
+                            lastTrack.title !== track.title ||
+                            lastTrack.artist !== track.artist ||
+                            lastTrack.album !== track.album ||
+                            lastTrack.duration !== track.duration
+                        ) {
                             Log.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Track changed to "${track.title}" by "${track.artist}"`);
                             lastTrack = track;
                             this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', {

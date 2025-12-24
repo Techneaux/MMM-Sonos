@@ -32,7 +32,7 @@ Module.register('MMM-Sonos', {
 
     debugLog: function (message) {
         if (this.config.debug) {
-            console.log(`[MMM-Sonos] [Frontend] ${message}`);
+            Log.log(`[MMM-Sonos] [Frontend] ${message}`);
         }
     },
 
