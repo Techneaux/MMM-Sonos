@@ -449,49 +449,61 @@ module.exports = NodeHelper.create({
         });
         this.subscribedDevices = [];
 
-        groups.forEach(group => {
+        // Subscribe to each group and set up event listeners
+        const subscribePromises = groups.map(group => {
             Log.log(`[MMM-Sonos] Registering listeners for group "${group.Name}" (host "${group.host}")`);
-
             const sonos = group.CoordinatorDevice();
-            this.subscribedDevices.push(sonos);
 
-            // Add error handler for this device
-            sonos.on('error', error => {
-                Log.error(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Device error: ${error.message}`);
-            });
+            // Subscribe first, then attach handlers
+            return listener.subscribeTo(sonos)
+                .then(() => {
+                    this.subscribedDevices.push(sonos);
+                    this.debugLog(`[${group.Name}] Subscription created`);
 
-            sonos.on('CurrentTrack', track => {
-                Log.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Track changed to "${track.title}" by "${track.artist}"`);
-                this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', {
-                    group,
-                    track
+                    // Add error handler for this device
+                    sonos.on('error', error => {
+                        Log.error(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Device error: ${error.message}`);
+                    });
+
+                    sonos.on('CurrentTrack', track => {
+                        Log.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Track changed to "${track.title}" by "${track.artist}"`);
+                        this.sendSocketNotification('SET_SONOS_CURRENT_TRACK', {
+                            group,
+                            track
+                        });
+                    });
+
+                    sonos.on('Volume', volume => {
+                        this.debugLog(`[Group ${group.Name} - ${group.host}] Volume changed to "${volume}"`);
+                        this.sendSocketNotification('SET_SONOS_VOLUME', {
+                            group,
+                            volume
+                        });
+                    });
+
+                    sonos.on('Muted', isMuted => {
+                        this.debugLog(`[Group ${group.Name} - ${group.host}] Group is ${isMuted ? 'muted' : 'unmuted'}`);
+                        this.sendSocketNotification('SET_SONOS_MUTE', {
+                            group,
+                            isMuted
+                        });
+                    });
+
+                    sonos.on('PlayState', state => {
+                        Log.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Play state change to "${state}"`);
+                        this.sendSocketNotification('SET_SONOS_PLAY_STATE', {
+                            group,
+                            state
+                        });
+                    });
+                })
+                .catch(err => {
+                    Log.error(`[MMM-Sonos] Failed to subscribe to "${group.Name}": ${err.message}`);
                 });
-            });
-
-            sonos.on('Volume', volume => {
-                this.debugLog(`[Group ${group.Name} - ${group.host}] Volume changed to "${volume}"`);
-                this.sendSocketNotification('SET_SONOS_VOLUME', {
-                    group,
-                    volume
-                });
-            });
-
-            sonos.on('Muted', isMuted => {
-                this.debugLog(`[Group ${group.Name} - ${group.host}] Group is ${isMuted ? 'muted' : 'unmuted'}`);
-                this.sendSocketNotification('SET_SONOS_MUTE', {
-                    group,
-                    isMuted
-                });
-            });
-
-            sonos.on('PlayState', state => {
-                Log.log(`[MMM-Sonos] [Group ${group.Name} - ${group.host}] Play state change to "${state}"`);
-                this.sendSocketNotification('SET_SONOS_PLAY_STATE', {
-                    group,
-                    state
-                });
-            });
         });
+
+        // Track subscription completion (no action needed, just for consistency with hybrid mode)
+        Promise.allSettled(subscribePromises);
 
         // Note: No watchdog in events-only mode - it can't distinguish between
         // "events are broken" and "nothing is playing". Use hybrid mode for self-healing.
@@ -870,26 +882,37 @@ module.exports = NodeHelper.create({
             };
         });
 
-        // Set up event listeners for each group
-        groups.forEach(group => {
+        // Subscribe to each group and set up event listeners
+        const subscribePromises = groups.map(group => {
             Log.log(`[MMM-Sonos] Registering hybrid listeners for group "${group.Name}" (host "${group.host}")`);
             const device = group.CoordinatorDevice();
-            this.attachEventHandlers(group, device);
+            // Note: attachEventHandlers() adds device to subscribedDevices
+
+            return listener.subscribeTo(device)
+                .then(() => {
+                    this.debugLog(`[${group.Name}] Subscription created`);
+                    this.attachEventHandlers(group, device);
+                })
+                .catch(err => {
+                    Log.error(`[MMM-Sonos] Failed to subscribe to "${group.Name}": ${err.message}`);
+                });
         });
 
-        // Start adaptive polling (unless disabled with pollingIntervalPlaying: 0)
-        const playingInterval = this.config?.pollingIntervalPlaying ?? 15000;
-        const idleInterval = this.config?.pollingIntervalIdle ?? 60000;
+        // Start polling and health check after subscriptions are set up
+        Promise.allSettled(subscribePromises).then(() => {
+            const playingInterval = this.config?.pollingIntervalPlaying ?? 15000;
+            const idleInterval = this.config?.pollingIntervalIdle ?? 60000;
 
-        if (playingInterval === 0) {
-            Log.log(`[MMM-Sonos] Hybrid mode: Events + health checks (polling disabled)`);
-        } else {
-            Log.log(`[MMM-Sonos] Hybrid mode: Adaptive polling (${playingInterval}ms playing / ${idleInterval}ms idle)`);
-            this.schedulePoll();
-        }
+            if (playingInterval === 0) {
+                Log.log(`[MMM-Sonos] Hybrid mode: Events + health checks (polling disabled)`);
+            } else {
+                Log.log(`[MMM-Sonos] Hybrid mode: Adaptive polling (${playingInterval}ms playing / ${idleInterval}ms idle)`);
+                this.schedulePoll();
+            }
 
-        // Start subscription health check
-        this.startSubscriptionHealthCheck();
+            // Start subscription health check
+            this.startSubscriptionHealthCheck();
+        });
     },
 
     handleTogglePlayPause: function(groupId) {
