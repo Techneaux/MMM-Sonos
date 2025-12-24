@@ -877,11 +877,16 @@ module.exports = NodeHelper.create({
             this.attachEventHandlers(group, device);
         });
 
-        // Start adaptive polling
-        const playingInterval = this.config?.pollingIntervalPlaying || 15000;
-        const idleInterval = this.config?.pollingIntervalIdle || 60000;
-        Log.log(`[MMM-Sonos] Hybrid mode: Adaptive polling (${playingInterval}ms playing / ${idleInterval}ms idle)`);
-        this.schedulePoll();
+        // Start adaptive polling (unless disabled with pollingIntervalPlaying: 0)
+        const playingInterval = this.config?.pollingIntervalPlaying ?? 15000;
+        const idleInterval = this.config?.pollingIntervalIdle ?? 60000;
+
+        if (playingInterval === 0) {
+            Log.log(`[MMM-Sonos] Hybrid mode: Events + health checks (polling disabled)`);
+        } else {
+            Log.log(`[MMM-Sonos] Hybrid mode: Adaptive polling (${playingInterval}ms playing / ${idleInterval}ms idle)`);
+            this.schedulePoll();
+        }
 
         // Start subscription health check
         this.startSubscriptionHealthCheck();
