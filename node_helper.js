@@ -544,16 +544,16 @@ module.exports = NodeHelper.create({
             this.debugLog(`Running subscription health check for ${this.groups.length} groups`);
             this.debugLog(`Listener has ${listener._deviceSubscriptions?.length || 0} total subscriptions`);
 
-            this.groups.forEach(group => {
+            for (const group of this.groups) {
                 // Use stored device reference (not CoordinatorDevice() which returns new object each time)
                 const health = this.groupHealth[group.ID];
                 if (!health || !health.device) {
                     this.debugLog(`[${group.Name}] No device reference stored, triggering rediscovery`);
                     this.triggerRediscovery();
-                    return;
+                    return; // Exit callback - don't process remaining groups after rediscovery
                 }
                 this.renewDeviceSubscriptions(health.device, group);
-            });
+            }
         }, checkInterval);
 
         Log.log(`[MMM-Sonos] Subscription health check started (interval: ${checkInterval}ms)`);
@@ -815,7 +815,11 @@ module.exports = NodeHelper.create({
 
         // Clear stale DeviceSubscription entries (library bug - doesn't do this itself)
         if (listener._deviceSubscriptions) {
-            listener._deviceSubscriptions.length = 0;
+            try {
+                listener._deviceSubscriptions.length = 0;
+            } catch (e) {
+                Log.warn(`[MMM-Sonos] Failed to clear stale subscriptions: ${e.message}`);
+            }
         }
 
         this.asyncDevice = null;
