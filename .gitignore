@@ -93,3 +93,6 @@ typings/
 
 # Package lock
 package-lock.json
+
+# Scratch directory for local testing
+scratch/
